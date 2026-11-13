@@ -10,18 +10,13 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
-import {
-  UserRole,
-  RefundStatus,
-  users,
-  courses,
-  purchases,
-  refunds,
-} from "~/db/schema";
+import { UserRole, RefundRequestStatus, users } from "~/db/schema";
+import { RefundRequestBadge } from "~/components/refund-request-badge";
+import { getRefundRequestsForUser } from "~/lib/refunds.server";
 import { AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
 
 const settingsSchema = z.object({
@@ -55,25 +50,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     throw data("User not found.", { status: 404 });
   }
 
-  const pendingChargebacks = db
-    .select({
-      id: refunds.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      amountPaid: purchases.amountPaid,
-      reason: refunds.reason,
-      requestedAt: refunds.requestedAt,
-    })
-    .from(refunds)
-    .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
-    .innerJoin(courses, eq(purchases.courseId, courses.id))
-    .where(
-      and(
-        eq(purchases.userId, currentUserId),
-        eq(refunds.status, RefundStatus.Requested)
-      )
-    )
-    .all();
+  const refundRequests = getRefundRequestsForUser(currentUserId);
 
   return {
     user: {
@@ -83,7 +60,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       bio: currentUser.bio,
       role: currentUser.role,
     },
-    pendingChargebacks,
+    refundRequests,
   };
 }
 
@@ -112,8 +89,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const { name, bio } = parsed.data;
 
-  db
-    .update(users)
+  db.update(users)
     .set({ name, email: currentUser.email, bio: bio || null })
     .where(eq(users.id, currentUser.id))
     .returning()
@@ -122,8 +98,11 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, pendingChargebacks } = loaderData;
+  const { user, refundRequests } = loaderData;
   const fetcher = useFetcher();
+  const pendingCount = refundRequests.filter(
+    (refundRequest) => refundRequest.status === RefundRequestStatus.Pending
+  ).length;
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -131,7 +110,8 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
       toast.success("Profile updated successfully.");
     }
     if (fetcher.state === "idle" && fetcher.data?.errors) {
-      const firstError = Object.values(fetcher.data.errors)[0] as string | undefined;
+      const firstError = Object.values(fetcher.data.errors)[0] as
+        string | undefined;
       if (firstError) toast.error(firstError);
     }
   }, [fetcher.state, fetcher.data]);
@@ -199,45 +179,45 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
                 </p>
               </div>
             )}
-            <Button
-              type="submit"
-              disabled={fetcher.state !== "idle"}
-            >
+            <Button type="submit" disabled={fetcher.state !== "idle"}>
               {fetcher.state !== "idle" ? "Saving..." : "Save Changes"}
             </Button>
           </fetcher.Form>
         </CardContent>
       </Card>
 
-      {pendingChargebacks.length > 0 && (
+      {refundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">
           <CardHeader>
-            <h2 className="text-lg font-semibold">Pending Chargeback</h2>
+            <h2 className="text-lg font-semibold">Refund requests</h2>
             <p className="text-sm text-muted-foreground">
-              {pendingChargebacks.length === 1
-                ? "One chargeback is waiting on us."
-                : `${pendingChargebacks.length} chargebacks are waiting on us.`}
+              {pendingCount === 0
+                ? "None are waiting on us."
+                : pendingCount === 1
+                  ? "One is waiting on us."
+                  : `${pendingCount} are waiting on us.`}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {pendingChargebacks.map((chargeback) => (
-              <div key={chargeback.id} className="rounded-md border p-3">
+            {refundRequests.map((refundRequest) => (
+              <div key={refundRequest.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <Link
-                    to={`/courses/${chargeback.courseSlug}`}
+                    to={`/courses/${refundRequest.courseSlug}`}
                     className="font-medium hover:underline"
                   >
-                    {chargeback.courseTitle}
+                    {refundRequest.courseTitle}
                   </Link>
-                  <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                    Pending Chargeback
-                  </span>
+                  <RefundRequestBadge
+                    status={refundRequest.status}
+                    refundStatus={refundRequest.refundStatus}
+                  />
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {formatPrice(chargeback.amountPaid)} · raised{" "}
-                  {new Date(chargeback.requestedAt).toLocaleDateString()}
+                  {formatPrice(refundRequest.refundAmount)} · requested{" "}
+                  {new Date(refundRequest.requestedAt).toLocaleDateString()}
                 </p>
-                <p className="mt-2 text-sm">{chargeback.reason}</p>
+                <p className="mt-2 text-sm">{refundRequest.reason}</p>
               </div>
             ))}
           </CardContent>
@@ -260,12 +240,10 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
           : "Please select a user from the DevUI panel.";
     } else if (error.status === 404) {
       title = "User not found";
-      message =
-        typeof error.data === "string" ? error.data : "User not found.";
+      message = typeof error.data === "string" ? error.data : "User not found.";
     } else {
       title = `Error ${error.status}`;
-      message =
-        typeof error.data === "string" ? error.data : error.statusText;
+      message = typeof error.data === "string" ? error.data : error.statusText;
     }
   }
 

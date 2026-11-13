@@ -13,6 +13,7 @@ import {
   lessons,
   enrollments,
   purchases,
+  payments,
   teams,
   teamMembers,
   coupons,
@@ -183,11 +184,18 @@ function createPurchase(
   amountPaid: number,
   country: string | null
 ) {
-  return db
+  const purchase = db
     .insert(purchases)
     .values({ userId, courseId, amountPaid, country })
     .returning()
     .get();
+
+  // No payment provider yet: the purchase is paid in full when it is made.
+  db.insert(payments)
+    .values({ purchaseId: purchase.id, amount: amountPaid })
+    .run();
+
+  return purchase;
 }
 
 function getTeamForAdmin(userId: number) {

@@ -12,6 +12,7 @@ import {
   LessonProgressStatus,
   QuestionType,
   TeamMemberRole,
+  RefundRequestStatus,
 } from "../app/db/schema";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,6 +78,8 @@ async function seed() {
     DROP TABLE IF EXISTS team_members;
     DROP TABLE IF EXISTS teams;
     DROP TABLE IF EXISTS refunds;
+    DROP TABLE IF EXISTS refund_requests;
+    DROP TABLE IF EXISTS payments;
     DROP TABLE IF EXISTS purchases;
     DROP TABLE IF EXISTS enrollments;
     DROP TABLE IF EXISTS lessons;
@@ -222,15 +225,40 @@ async function seed() {
   // generated at the bottom of this file. Sign-up dates are spread across the
   // last twelve months, including the last few days.
   const cohortNames = [
-    "Ava Nakamura", "Noah Blackwood", "Isla Fernandes", "Ethan Okafor",
-    "Mia Lindqvist", "Lucas Moreau", "Zara Haddad", "Felix Andersen",
-    "Nina Kowalski", "Omar Rahman", "Chloe Beaumont", "Dmitri Volkov",
-    "Priya Raghavan", "Tomas Silva", "Hana Kim", "Gabriel Rossi",
-    "Amara Diallo", "Jonas Weber", "Lena Petrova", "Kwame Mensah",
-    "Sofia Ricci", "Aarav Shah", "Freya Nilsen", "Diego Castillo",
-    "Yuki Tanaka", "Rosa Delgado", "Idris Bello", "Clara Hoffmann",
-    "Mateo Alvarez", "Elif Demir", "Ruben Ortiz", "Anika Bose",
-    "Caleb Ncube", "Marta Novak",
+    "Ava Nakamura",
+    "Noah Blackwood",
+    "Isla Fernandes",
+    "Ethan Okafor",
+    "Mia Lindqvist",
+    "Lucas Moreau",
+    "Zara Haddad",
+    "Felix Andersen",
+    "Nina Kowalski",
+    "Omar Rahman",
+    "Chloe Beaumont",
+    "Dmitri Volkov",
+    "Priya Raghavan",
+    "Tomas Silva",
+    "Hana Kim",
+    "Gabriel Rossi",
+    "Amara Diallo",
+    "Jonas Weber",
+    "Lena Petrova",
+    "Kwame Mensah",
+    "Sofia Ricci",
+    "Aarav Shah",
+    "Freya Nilsen",
+    "Diego Castillo",
+    "Yuki Tanaka",
+    "Rosa Delgado",
+    "Idris Bello",
+    "Clara Hoffmann",
+    "Mateo Alvarez",
+    "Elif Demir",
+    "Ruben Ortiz",
+    "Anika Bose",
+    "Caleb Ncube",
+    "Marta Novak",
   ];
 
   const cohort = db
@@ -2058,7 +2086,9 @@ This course is still in draft while the cluster examples are rewritten against t
   markComplete(students[4].id, course1LessonIds[0], 12);
   markInProgress(students[4].id, course1LessonIds[1]);
 
-  console.log(`Created ${countRows(schema.lessonProgress)} lesson progress records.`);
+  console.log(
+    `Created ${countRows(schema.lessonProgress)} lesson progress records.`
+  );
 
   // ─── Quiz Attempts ───
 
@@ -2735,6 +2765,45 @@ This course is still in draft while the cluster examples are rewritten against t
   }
 
   console.log(`Created ${watchEventRows.length} video watch events.`);
+
+  // ─── Payments ───
+  // No payment provider yet: every purchase was paid in full, in USD, when it
+  // was made.
+
+  sqlite.exec(`
+    INSERT INTO payments (purchase_id, amount, currency, captured_at)
+    SELECT id, amount_paid, 'USD', created_at FROM purchases;
+  `);
+
+  console.log(`Created ${countRows(schema.payments)} payments.`);
+
+  // ─── Refund requests ───
+  // One pending request, on the newest individual purchase, so the admin page
+  // has something to resolve.
+
+  const newestIndividualPurchase = db
+    .select()
+    .from(schema.purchases)
+    .where(
+      sql`${schema.purchases.id} not in (select ${schema.coupons.purchaseId} from ${schema.coupons})`
+    )
+    .orderBy(sql`${schema.purchases.createdAt} desc`)
+    .get();
+
+  if (newestIndividualPurchase && newestIndividualPurchase.amountPaid > 0) {
+    db.insert(schema.refundRequests)
+      .values({
+        purchaseId: newestIndividualPurchase.id,
+        requestedByUserId: newestIndividualPurchase.userId,
+        status: RefundRequestStatus.Pending,
+        reason: "The course moves faster than I expected for a beginner.",
+        refundAmount: newestIndividualPurchase.amountPaid,
+        requestedAt: new Date().toISOString(),
+      })
+      .run();
+  }
+
+  console.log(`Created ${countRows(schema.refundRequests)} refund requests.`);
 
   // ─── Summary ───
 
