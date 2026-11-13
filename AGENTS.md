@@ -1,3 +1,7 @@
+## Language
+
+Use the terms in `GLOSSARY.md` for code, UI copy, emails and issues. If the code disagrees with it, the glossary wins.
+
 ## Verification checks
 
 Do these checks in this order before you report a change to `app/` as complete:
