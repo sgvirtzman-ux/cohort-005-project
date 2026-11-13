@@ -1,9 +1,14 @@
-import { useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, useFetcher } from "react-router";
+import { toast } from "sonner";
 import type { Route } from "./+types/team";
 import { getCurrentUserId } from "~/lib/session";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
+import { Textarea } from "~/components/ui/textarea";
+import { getTeamLicencesForBuyer } from "~/lib/refunds.server";
+import { REFUND_INELIGIBLE_MESSAGES } from "~/lib/refunds";
+import { formatPrice } from "~/lib/utils";
 import { Users, BookOpen, Copy, Check, AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse } from "react-router";
 import { db } from "~/db";
@@ -13,6 +18,8 @@ import {
   coupons,
   courses,
   users,
+  purchases,
+  PurchaseStatus,
   TeamMemberRole,
 } from "~/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -34,8 +41,20 @@ function getTeamForAdmin(userId: number) {
   return db.select().from(teams).where(eq(teams.id, membership.teamId)).get();
 }
 
+// Seats from a refunded licence no longer work, so they are left out.
 function getCouponsForTeam(teamId: number) {
-  return db.select().from(coupons).where(eq(coupons.teamId, teamId)).all();
+  return db
+    .select({ coupon: coupons })
+    .from(coupons)
+    .innerJoin(purchases, eq(coupons.purchaseId, purchases.id))
+    .where(
+      and(
+        eq(coupons.teamId, teamId),
+        eq(purchases.status, PurchaseStatus.Active)
+      )
+    )
+    .all()
+    .map((row) => row.coupon);
 }
 
 function getCourseById(id: number) {
@@ -145,7 +164,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     };
   });
 
-  return { courseStats, couponRows };
+  const licences = getTeamLicencesForBuyer(currentUserId);
+
+  return { courseStats, couponRows, licences };
 }
 
 function CopyButton({ code }: { code: string }) {
@@ -181,7 +202,7 @@ function CopyButton({ code }: { code: string }) {
 }
 
 export default function Team({ loaderData }: Route.ComponentProps) {
-  const { courseStats, couponRows } = loaderData;
+  const { courseStats, couponRows, licences } = loaderData;
   const [courseFilter, setCourseFilter] = useState<number | "all">("all");
 
   const filteredCoupons =
@@ -242,6 +263,8 @@ export default function Team({ loaderData }: Route.ComponentProps) {
           ))}
         </div>
       )}
+
+      {licences.length > 0 && <Licences licences={licences} />}
 
       {/* Coupon list */}
       <div>
@@ -315,6 +338,117 @@ export default function Team({ loaderData }: Route.ComponentProps) {
         )}
       </div>
     </div>
+  );
+}
+
+type LicenceRow = Route.ComponentProps["loaderData"]["licences"][number];
+
+function Licences({ licences }: { licences: LicenceRow[] }) {
+  return (
+    <div className="mb-8">
+      <h2 className="mb-4 text-lg font-semibold">Licences</h2>
+      <div className="space-y-3">
+        {licences.map((licence) => (
+          <Card key={licence.purchaseId}>
+            <CardContent className="pt-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{licence.courseTitle}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {licence.totalSeats} seats ({licence.claimedSeats} claimed)
+                    · {formatPrice(licence.amountPaid)} · bought{" "}
+                    {new Date(licence.purchasedAt).toLocaleDateString()}
+                  </p>
+                </div>
+                {licence.status === PurchaseStatus.Refunded && (
+                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800 dark:bg-gray-900/30 dark:text-gray-400">
+                    Refunded
+                  </span>
+                )}
+              </div>
+              {licence.eligibility?.eligible ? (
+                <LicenceRefundRequest
+                  purchaseId={licence.purchaseId}
+                  amount={licence.eligibility.refundAmount}
+                />
+              ) : (
+                licence.status === PurchaseStatus.Active &&
+                licence.eligibility && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {REFUND_INELIGIBLE_MESSAGES[licence.eligibility.reason]}
+                  </p>
+                )
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LicenceRefundRequest({
+  purchaseId,
+  amount,
+}: {
+  purchaseId: number;
+  amount: number;
+}) {
+  const fetcher = useFetcher<{ errors?: Record<string, string> }>();
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const isSubmitting = fetcher.state !== "idle";
+
+  useEffect(() => {
+    const firstError = Object.values(fetcher.data?.errors ?? {})[0];
+    if (fetcher.state === "idle" && firstError) {
+      toast.error(firstError);
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  if (!isFormOpen) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mt-2 text-muted-foreground"
+        onClick={() => setIsFormOpen(true)}
+      >
+        Request a refund
+      </Button>
+    );
+  }
+
+  return (
+    <fetcher.Form
+      method="post"
+      action={`/purchases/${purchaseId}/refund-request`}
+      className="mt-3 space-y-2"
+    >
+      <p className="text-xs text-muted-foreground">
+        Once your refund request is approved, we will send {formatPrice(amount)}{" "}
+        back to the card you paid with, and this licence&apos;s seat links will
+        stop working.
+      </p>
+      <Textarea
+        name="reason"
+        rows={3}
+        required
+        placeholder="What went wrong?"
+      />
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={isSubmitting}>
+          {isSubmitting ? "Sending..." : "Request a refund"}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setIsFormOpen(false)}
+        >
+          Keep it
+        </Button>
+      </div>
+    </fetcher.Form>
   );
 }
 

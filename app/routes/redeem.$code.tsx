@@ -11,7 +11,13 @@ import { Button } from "~/components/ui/button";
 import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
 import { data } from "react-router";
 import { db } from "~/db";
-import { purchases, coupons, courses, enrollments } from "~/db/schema";
+import {
+  purchases,
+  coupons,
+  courses,
+  enrollments,
+  PurchaseStatus,
+} from "~/db/schema";
 import { eq, and } from "drizzle-orm";
 
 function getCourseById(id: number) {
@@ -72,6 +78,10 @@ function redeemCoupon(
     .from(purchases)
     .where(eq(purchases.id, coupon.purchaseId))
     .get();
+
+  if (purchase?.status === PurchaseStatus.Refunded) {
+    return { ok: false, error: "This seat's licence has been refunded" };
+  }
 
   if (purchase?.country && purchase.country !== userCountry) {
     return {

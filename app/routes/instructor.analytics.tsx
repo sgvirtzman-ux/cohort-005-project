@@ -22,6 +22,7 @@ import { db } from "~/db";
 import {
   CourseStatus,
   LessonProgressStatus,
+  PurchaseStatus,
   UserRole,
   comments,
   courseRatings,
@@ -217,8 +218,13 @@ function scopeOn(
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
+// Revenue is payments minus succeeded refunds. Refunds are always for the full
+// amount paid, so a refunded purchase simply drops out of every figure — from
+// the period it was bought in, not the period it was refunded in.
+const notRefunded = eq(purchases.status, PurchaseStatus.Active);
+
 function purchaseScope(instructorId: number | null, range: AnalyticsRange) {
-  return scopeOn(purchases.createdAt, instructorId, range);
+  return and(notRefunded, scopeOn(purchases.createdAt, instructorId, range));
 }
 
 function sinceRange(dateColumn: SQLiteColumn, range: AnalyticsRange) {
@@ -263,6 +269,7 @@ function getStudentRevenue(
       and(
         inArray(purchases.userId, studentIds),
         notExists(mintedSeats),
+        notRefunded,
         ownedBy(instructorId)
       )
     )
@@ -287,7 +294,11 @@ function getStudentRevenue(
     .innerJoin(courses, eq(purchases.courseId, courses.id))
     .innerJoin(seatCounts, eq(seatCounts.purchaseId, coupons.purchaseId))
     .where(
-      and(inArray(coupons.redeemedByUserId, studentIds), ownedBy(instructorId))
+      and(
+        inArray(coupons.redeemedByUserId, studentIds),
+        notRefunded,
+        ownedBy(instructorId)
+      )
     )
     .groupBy(coupons.redeemedByUserId)
     .all();
@@ -743,6 +754,7 @@ function getCourseRevenueByCountry(
     .where(
       and(
         eq(purchases.courseId, courseId),
+        notRefunded,
         sinceRange(purchases.createdAt, range)
       )
     )

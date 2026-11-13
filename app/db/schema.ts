@@ -7,6 +7,7 @@ import {
   uniqueIndex,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 export enum UserRole {
   Student = "student",
@@ -31,11 +32,24 @@ export enum QuestionType {
   TrueFalse = "true_false",
 }
 
-export enum RefundStatus {
-  Requested = "requested",
+export enum PurchaseStatus {
+  Active = "active",
+  Refunded = "refunded",
+}
+
+export enum RefundRequestStatus {
+  Pending = "pending",
   Approved = "approved",
   Declined = "declined",
 }
+
+export enum RefundStatus {
+  Issued = "issued",
+  Succeeded = "succeeded",
+  Failed = "failed",
+}
+
+export const DEFAULT_CURRENCY = "USD";
 
 export enum TeamMemberRole {
   Admin = "admin",
@@ -222,6 +236,10 @@ export const purchases = sqliteTable(
       .references(() => courses.id),
     amountPaid: integer("amount_paid").notNull(),
     country: text("country"),
+    status: text("status")
+      .notNull()
+      .$type<PurchaseStatus>()
+      .default(PurchaseStatus.Active),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -229,28 +247,89 @@ export const purchases = sqliteTable(
   (table) => [index("purchases_course_idx").on(table.courseId)]
 );
 
-export const refunds = sqliteTable(
-  "refunds",
+// The money captured for a purchase. One per purchase. The provider reference
+// stays null until a payment provider is integrated.
+export const payments = sqliteTable(
+  "payments",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     purchaseId: integer("purchase_id")
       .notNull()
       .references(() => purchases.id),
+    amount: integer("amount").notNull(),
+    currency: text("currency").notNull().default(DEFAULT_CURRENCY),
+    providerReference: text("provider_reference"),
+    capturedAt: text("captured_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => [uniqueIndex("payments_purchase_unique").on(table.purchaseId)]
+);
+
+// A buyer asking for their money back. A purchase gets at most one: a declined
+// request is final, and an approved one is never repeated.
+export const refundRequests = sqliteTable(
+  "refund_requests",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    purchaseId: integer("purchase_id")
+      .notNull()
+      .references(() => purchases.id),
+    requestedByUserId: integer("requested_by_user_id")
+      .notNull()
+      .references(() => users.id),
     status: text("status")
       .notNull()
-      .$type<RefundStatus>()
-      .default(RefundStatus.Requested),
-    // The learner's own words, in the box on the course page.
+      .$type<RefundRequestStatus>()
+      .default(RefundRequestStatus.Pending),
+    // The buyer's own words.
     reason: text("reason").notNull(),
-    // Null until someone approves — a declined request refunds nothing.
-    amountRefunded: integer("amount_refunded"),
+    // Eligibility is judged once, when the request is made, and this amount
+    // stands through resolution.
+    refundAmount: integer("refund_amount").notNull(),
+    currency: text("currency").notNull().default(DEFAULT_CURRENCY),
     requestedAt: text("requested_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
     resolvedAt: text("resolved_at"),
     resolvedByUserId: integer("resolved_by_user_id").references(() => users.id),
   },
-  (table) => [index("refunds_purchase_idx").on(table.purchaseId)]
+  (table) => [
+    uniqueIndex("refund_requests_purchase_unique").on(table.purchaseId),
+  ]
+);
+
+// Money going back against a payment. A failed refund is retried by issuing a
+// new one for the same request; a payment has at most one that succeeded.
+export const refunds = sqliteTable(
+  "refunds",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    refundRequestId: integer("refund_request_id")
+      .notNull()
+      .references(() => refundRequests.id),
+    paymentId: integer("payment_id")
+      .notNull()
+      .references(() => payments.id),
+    amount: integer("amount").notNull(),
+    currency: text("currency").notNull().default(DEFAULT_CURRENCY),
+    status: text("status")
+      .notNull()
+      .$type<RefundStatus>()
+      .default(RefundStatus.Issued),
+    providerReference: text("provider_reference"),
+    failureReason: text("failure_reason"),
+    issuedAt: text("issued_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    index("refunds_request_idx").on(table.refundRequestId),
+    uniqueIndex("refunds_one_success_per_payment")
+      .on(table.paymentId)
+      .where(sql`${table.status} = 'succeeded'`),
+  ]
 );
 
 export const teams = sqliteTable("teams", {
