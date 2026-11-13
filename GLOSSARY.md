@@ -2,7 +2,7 @@
 
 The agreed language for Cadence. Use these terms in code, UI copy, emails, issues and specs. When a term here disagrees with the code, the glossary wins and the code is the bug.
 
-Some terms (**Payment**, **Refund**, **Chargeback**) describe a model Cadence has not built yet. They are defined now so the language is settled before a payments provider arrives.
+Some terms (**Payment**, **Refund**) describe a model Cadence has not built yet. They are defined now so the language is settled before a payments provider arrives.
 
 ## Purchases
 
@@ -15,7 +15,7 @@ The order: who bought which course. Not the money; that is the **payment**.
 | State    | Meaning                                                                                    |
 | -------- | ------------------------------------------------------------------------------------------ |
 | Active   | The purchase stands.                                                                       |
-| Refunded | The money has gone back, through a **refund** that succeeded or a **chargeback** that was lost. |
+| Refunded | The money has gone back through a **refund** that succeeded.                             |
 
 When a purchase becomes Refunded, its **enrollments** are revoked. An approved refund request alone does not make a purchase Refunded; the refund has to succeed.
 
@@ -58,21 +58,9 @@ Money going back to the buyer against a payment. It is created when a refund req
 
 Not the same as a **refund request**: the request is the decision, the refund is the money moving.
 
-### Chargeback
-
-A card dispute opened by the buyer's bank, not through Cadence.
-
-**Opened → Won | Lost**
-
-- Opening a chargeback declines any pending refund request on that payment, so the money cannot go back twice.
-- A chargeback against a payment that has already been refunded is contested with proof of the refund.
-- A lost chargeback makes the purchase **Refunded**, the same as a succeeded refund.
-
-Never use this word for a refund request.
-
 ### Revenue
 
-Payments, minus succeeded refunds, minus lost chargebacks. The platform fee and the instructor's net are worked out on that figure, so a refund reverses both. If the instructor has already been paid their share, it comes off their next payout.
+Payments minus succeeded refunds. The platform fee and the instructor's net are worked out on that figure, so a refund reverses both. If the instructor has already been paid their share, it comes off their next payout.
 
 ## Refund requests
 
@@ -91,7 +79,7 @@ A buyer asking for their money back on a **purchase**. This is the one name for 
 | -------- | --------------------------------------------------------------------------------------------- |
 | Pending  | Submitted and waiting for **resolution**.                                                     |
 | Approved | An admin accepted it, and a **refund** for the **refund amount** is issued.                   |
-| Declined | An admin turned it down, or a chargeback was opened on the payment. Nothing is refunded. Final. |
+| Declined | An admin turned it down. Nothing is refunded. Final.                                          |
 
 "Requested" names the event, not a state: "requested on 3 Nov", never "status: requested".
 
@@ -132,6 +120,6 @@ The course page and the server enforce the same rules.
 | -------------------------------- | -------------- | ----------------------------------------------------------------- |
 | Cancellation                     | Refund request | One name for one thing.                                           |
 | Reversal                         | Refund request | One name for one thing.                                           |
-| Chargeback (for a refund request) | Refund request | A chargeback is a bank dispute, which a refund request is not.    |
+| Chargeback                       | Refund request | A bank dispute, not part of Cadence.                              |
 | Requested (as a state)           | Pending        | "Requested" is fine for the event.                                |
 | Refunded (for a request)         | Approved       | "Refunded" is a purchase state, reached only once the money is back. |
